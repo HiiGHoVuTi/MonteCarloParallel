@@ -1,0 +1,44 @@
+
+__IMPORT_OCL_SHADING;
+use std::time::Instant;
+
+main := None => Void: {
+
+    Const * u64: N_JOBS = 10_000;
+    Const * u64: N_ITERS_PER_JOB = 3_200;
+
+    start := Instant::now();
+
+    ShaderBuilder! {
+    [data]
+        source := "shaders/main.comp";
+        dims := [ N_JOBS ];
+    [buffers]
+        count_buffer := {
+            type <- u32,
+            dims <- [ N_JOBS ]
+        };
+    [kernels]
+        count_kernel := {
+            name <- "main",
+            args <- [ count_buffer, N_ITERS_PER_JOB as u32 ]
+        };
+    }; 
+
+    range := 0 .. N_JOBS;
+    Mut * Vec{u32}: counts = range.map(_i => 0).collect();
+
+    ShaderCall! {
+    [data]
+        kernel := count_kernel;
+        pairs := [
+            [ count_buffer, counts ]
+        ];
+    };
+
+    u64: total_hits = counts.iter().sum();
+
+    print("GPU and Shaders");
+    print(4.0 * total_hits as f64 / (N_JOBS * N_ITERS_PER_JOB) as f64);
+    print(start.elapsed().as_secs_f64());
+};

@@ -1,0 +1,63 @@
+use std::cell::RefCell;
+use std::time::Instant;
+use futures::executor::block_on;
+use rand::prelude::*;
+use switchyard::Switchyard;
+use switchyard::threads::{thread_info, single_pool_one_to_one};
+
+ThreadLocalData := Struct! {
+[ data ]
+    StdRng: rng;
+    u64: count;
+
+[ methods ]
+    new := None => ThreadLocalData: {
+        ret ThreadLocalData {
+            rng: StdRng::from_entropy(),
+            count: 0
+        };
+    };
+};
+
+main := None => Void: {
+    start := Instant::now();
+
+    Mut: yard = Switchyard::new(
+        1, single_pool_one_to_one(thread_info(), None),
+        None => RefCell::new(ThreadLocalData::new())
+    ).unwrap();
+
+    Const * u64: N_JOBS = 32;
+    Const * u64: N_ITERS_PER_JOB = 1_000_000;
+
+    for _i in 0 .. N_JOBS {
+        yard.spawn_local(0, 0, move @ data => {
+            rust! \ async move { \;
+            Mut: borrowed_data = data.borrow_mut();
+            Mut: local_count = 0;
+
+            for _j in 0 .. N_ITERS_PER_JOB {
+                rust! \
+                    let (x, y) = borrowed_data.rng.gen::<(f32, f32)>();
+                \;
+                if x * x + y * y <= 1.0 {
+                    local_count <- local_count + 1;  
+                };
+            };
+            borrowed_data.count <- borrowed_data.count + local_count;
+            rust! \ } \;
+        });
+    };
+
+    block_on(yard.wait_for_idle());
+    total_hits := yard.access_per_thread_data()
+        .unwrap()
+        .iter()
+        .map(d => d.brrow_mut().count)
+        .sum::{u64}();
+
+    print("CPU and Threading");
+    print(4.0 * total_hits as f64 / (N_JOBS * N_ITERS_PER_JOB) as f64);
+    yard.finish();
+    print(start.elapsed().as_secs_f64());
+};
